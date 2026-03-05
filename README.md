@@ -12,3 +12,5 @@ The system is designed to demonstrate key distributed system principles such as:
 * Fault tolerant webhook delivery
 
 The goal of this project is to simulate how real payment infrastructure handles millions of transactions reliably.
+
+**Read the full system design → [docs/SYSTEM_DESIGN.md](docs/SYSTEM_DESIGN.md)**

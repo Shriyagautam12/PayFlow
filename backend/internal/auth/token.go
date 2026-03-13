@@ -23,7 +23,7 @@ type jwtClaims struct {
 
 // TokenService handles all JWT and refresh token operations
 type TokenService struct {
-	jwtSecret []byte
+	jwtSecret []byte // JWT secret 
 }
 
 func NewTokenService(jwtSecret []byte) *TokenService {

@@ -14,29 +14,37 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Shriyagautam12/PayFlow/internal/auth"
+	"github.com/Shriyagautam12/PayFlow/internal/wallet"
 	"github.com/Shriyagautam12/PayFlow/pkg/config"
 	"github.com/Shriyagautam12/PayFlow/pkg/middleware"
 )
 
 func main() {
-	// ── Logger ──────────────────────────────────────────────────────────────
+	// ── Logger ───────────────────────────────────────────────────────────────
 	log, _ := zap.NewProduction()
 	defer log.Sync()
 
-	// ── Config ──────────────────────────────────────────────────────────────
+	// ── Config ───────────────────────────────────────────────────────────────
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		log.Fatal("failed to load config", zap.Error(err))
 	}
 
-	// ── Database ─────────────────────────────────────────────────────────────
+	// ── Redis ─────────────────────────────────────────────────────────────────
+	redisClient, err := config.NewRedisClient(cfg.RedisURL)
+	if err != nil {
+		log.Fatal("failed to connect to redis", zap.Error(err))
+	}
+	defer redisClient.Close()
+
+	// ── Database ──────────────────────────────────────────────────────────────
 	db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
 	if err != nil {
 		log.Fatal("failed to connect to database", zap.Error(err))
 	}
 
 	// Auto-migrate schema (in production, use proper migrations)
-	db.AutoMigrate(&auth.Merchant{}, &auth.RefreshToken{})
+	db.AutoMigrate(&auth.Merchant{}, &auth.RefreshToken{}, &wallet.Wallet{}, &wallet.LedgerEntry{})
 
 	// ── Services ─────────────────────────────────────────────────────────────
 	tokenSvc := auth.NewTokenService([]byte(cfg.JWTSecret))
@@ -44,15 +52,19 @@ func main() {
 	authSvc := auth.NewService(db, tokenSvc, log)
 	authHandler := auth.NewHandler(authSvc, googleOAuth, log)
 
+	walletRepo := wallet.NewRepository(db)
+	walletSvc := wallet.NewService(walletRepo, log)
+	walletHandler := wallet.NewHandler(walletSvc, log)
+
 	// ── Router ───────────────────────────────────────────────────────────────
 	if cfg.AppEnv == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	r := gin.New()
-	r.Use(gin.Recovery())
-	r.Use(middleware.RequestLogger(log))
-	r.Use(middleware.CORS(cfg.AppURL))
+	r := gin.New() // creates a new Gin router
+	r.Use(gin.Recovery()) // recovers from any panics and writes a 500 if there are any
+	r.Use(middleware.RequestLogger(log)) // logs every incoming request with method, path, status, and latency
+	r.Use(middleware.CORS(cfg.AppURL)) // Handles CORS requests
 
 	// Health check — used by K8s liveness probe
 	r.GET("/health", func(c *gin.Context) {
@@ -60,10 +72,10 @@ func main() {
 	})
 
 	// All API routes under /v1
-	v1 := r.Group("/v1")
+	v1 := r.Group("/v1") 
 	authHandler.RegisterRoutes(v1)
 
-	// Protected route example — shows middleware usage
+	// Protected endpoint that requires authentication
 	protected := v1.Group("/")
 	protected.Use(middleware.RequireAuth(tokenSvc))
 	{
@@ -71,6 +83,7 @@ func main() {
 			merchantID := middleware.GetMerchantID(c)
 			c.JSON(http.StatusOK, gin.H{"merchant_id": merchantID})
 		})
+		walletHandler.RegisterRoutes(protected)
 	}
 
 	// ── Server with graceful shutdown ─────────────────────────────────────────

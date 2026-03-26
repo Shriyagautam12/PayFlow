@@ -42,9 +42,3 @@ func RequireAuth(tokens *auth.TokenService) gin.HandlerFunc {
 	}
 }
 
-// GetMerchantID extracts the authenticated merchant ID from the Gin context.
-// Call this in any handler protected by RequireAuth.
-func GetMerchantID(c *gin.Context) string {
-	id, _ := c.Get(MerchantIDKey)
-	return id.(string)
-}

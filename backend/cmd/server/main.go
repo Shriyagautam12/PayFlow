@@ -8,7 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -16,7 +15,7 @@ import (
 	"github.com/Shriyagautam12/PayFlow/internal/auth"
 	"github.com/Shriyagautam12/PayFlow/internal/wallet"
 	"github.com/Shriyagautam12/PayFlow/pkg/config"
-	"github.com/Shriyagautam12/PayFlow/pkg/middleware"
+	"github.com/Shriyagautam12/PayFlow/router"
 )
 
 func main() {
@@ -57,39 +56,23 @@ func main() {
 	walletHandler := wallet.NewHandler(walletSvc, log)
 
 	// ── Router ───────────────────────────────────────────────────────────────
-	if cfg.AppEnv == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
-	r := gin.New() // creates a new Gin router
-	r.Use(gin.Recovery()) // recovers from any panics and writes a 500 if there are any
-	r.Use(middleware.RequestLogger(log)) // logs every incoming request with method, path, status, and latency
-	r.Use(middleware.CORS(cfg.AppURL)) // Handles CORS requests
-
-	// Health check — used by K8s liveness probe
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "payflow-auth"})
-	})
-
-	// All API routes under /v1
-	v1 := r.Group("/v1") 
-	authHandler.RegisterRoutes(v1)
-
-	// Protected endpoint that requires authentication
-	protected := v1.Group("/")
-	protected.Use(middleware.RequireAuth(tokenSvc))
-	{
-		protected.GET("/me", func(c *gin.Context) {
-			merchantID := middleware.GetMerchantID(c)
-			c.JSON(http.StatusOK, gin.H{"merchant_id": merchantID})
-		})
-		walletHandler.RegisterRoutes(protected)
-	}
+	r := router.New(
+		router.RouterConfig{
+			Env:           cfg.AppEnv,
+			AllowedOrigin: cfg.AppURL,
+			TokenSvc:      tokenSvc,
+		},
+		router.Deps{
+			Auth:   authHandler,
+			Wallet: walletHandler,
+			Log:    log,
+		},
+	)
 
 	// ── Server with graceful shutdown ─────────────────────────────────────────
 	srv := &http.Server{
-		Addr:         ":" + cfg.Port,
-		Handler:      r,
+		Addr:    ":" + cfg.Port,
+		Handler: r,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,

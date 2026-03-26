@@ -3,9 +3,10 @@ package wallet
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/Shriyagautam12/PayFlow/pkg/middleware"
+	"github.com/Shriyagautam12/PayFlow/pkg/response"
 	"go.uber.org/zap"
 )
 
@@ -19,25 +20,14 @@ func NewHandler(svc *Service, log *zap.Logger) *Handler {
 	return &Handler{svc: svc, log: log}
 }
 
-// RegisterRoutes mounts all wallet endpoints under /v1/wallet.
-// All routes require the caller to be authenticated (JWT injected by RequireAuth middleware).
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	w := rg.Group("/wallet")
-	{
-		w.GET("", h.GetWallet)
-		w.GET("/ledger", h.GetLedger)
-		w.POST("/payout", h.Payout)
-	}
-}
-
 // @Router       /wallet [get]
 func (h *Handler) GetWallet(c *gin.Context) {
-	merchantID := getMerchantID(c)
+	merchantID := middleware.GetMerchantID(c)
 
 	resp, err := h.svc.GetBalance(c.Request.Context(), merchantID)
 	if err != nil {
 		h.log.Error("get wallet failed", zap.String("merchant_id", merchantID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errResp("could not retrieve wallet"))
+		response.Internal(c, "could not retrieve wallet")
 		return
 	}
 
@@ -46,15 +36,15 @@ func (h *Handler) GetWallet(c *gin.Context) {
 
 // @Router       /wallet/ledger [get]
 func (h *Handler) GetLedger(c *gin.Context) {
-	merchantID := getMerchantID(c)
+	merchantID := middleware.GetMerchantID(c)
 
-	page := queryInt(c, "page", 1)
-	pageSize := queryInt(c, "page_size", 20)
+	page := middleware.QueryInt(c, "page", 1)
+	pageSize := middleware.QueryInt(c, "page_size", 20)
 
 	resp, err := h.svc.GetLedger(c.Request.Context(), merchantID, page, pageSize)
 	if err != nil {
 		h.log.Error("get ledger failed", zap.String("merchant_id", merchantID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errResp("could not retrieve ledger"))
+		response.Internal(c, "could not retrieve ledger")
 		return
 	}
 
@@ -63,53 +53,25 @@ func (h *Handler) GetLedger(c *gin.Context) {
 
 // @Router       /wallet/payout [post]
 func (h *Handler) Payout(c *gin.Context) {
-	merchantID := getMerchantID(c)
+	merchantID := middleware.GetMerchantID(c)
 
 	var req PayoutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errResp(err.Error()))
+		response.BadRequest(c, err.Error())
 		return
 	}
 
 	resp, err := h.svc.Payout(c.Request.Context(), merchantID, req)
 	if err != nil {
 		if errors.Is(err, ErrInsufficientFunds) {
-			c.JSON(http.StatusPaymentRequired, errResp("insufficient funds"))
+			response.PaymentRequired(c, "insufficient funds")
 			return
 		}
 		h.log.Error("payout failed", zap.String("merchant_id", merchantID), zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errResp("payout failed"))
+		response.Internal(c, "payout failed")
 		return
 	}
 
 	c.JSON(http.StatusOK, resp)
 }
 
-// ── Helpers
-
-type errorResponse struct {
-	Error string `json:"error"`
-}
-
-func errResp(msg string) errorResponse {
-	return errorResponse{Error: msg}
-}
-
-// getMerchantID reads the merchant_id injected by the RequireAuth middleware.
-func getMerchantID(c *gin.Context) string {
-	id, _ := c.Get("merchant_id")
-	return id.(string)
-}
-
-// queryInt reads an integer query param, falling back to defaultVal on missing or invalid input.
-func queryInt(c *gin.Context, key string, defaultVal int) int {
-	raw := c.Query(key)
-	if raw == "" {
-		return defaultVal
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v < 1 {
-		return defaultVal
-	}
-	return v
-}

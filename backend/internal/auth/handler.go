@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/Shriyagautam12/PayFlow/pkg/response"
 	"go.uber.org/zap"
 )
 
@@ -28,21 +29,6 @@ func NewHandler(svc *Service, google *GoogleOAuth, log *zap.Logger) *Handler {
 	return &Handler{svc: svc, google: google, log: log}
 }
 
-// RegisterRoutes mounts all auth endpoints under /v1/auth
-func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
-	auth := rg.Group("/auth")
-	{
-		auth.POST("/register", h.Register)
-		auth.POST("/login", h.Login)
-		auth.POST("/refresh", h.Refresh)
-		auth.POST("/logout", h.Logout)
-
-		// Google OAuth — two endpoints: redirect + callback
-		auth.GET("/google", h.GoogleLogin)
-		auth.GET("/google/callback", h.GoogleCallback)
-	}
-}
-
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 // Register godoc
@@ -57,18 +43,18 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) Register(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResp(err.Error()))
+		response.BadRequest(c, err.Error())
 		return
 	}
 
 	resp, rawRefresh, err := h.svc.Register(c.Request.Context(), req)
 	if err != nil {
 		if errors.Is(err, ErrEmailTaken) {
-			c.JSON(http.StatusConflict, errorResp("email already registered"))
+			response.Conflict(c, "email already registered")
 			return
 		}
 		h.log.Error("register failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errorResp("registration failed"))
+		response.Internal(c, "registration failed")
 		return
 	}
 
@@ -88,22 +74,22 @@ func (h *Handler) Register(c *gin.Context) {
 func (h *Handler) Login(c *gin.Context) {
 	var req LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, errorResp(err.Error()))
+		response.BadRequest(c, err.Error())
 		return
 	}
 
 	resp, rawRefresh, err := h.svc.Login(c.Request.Context(), req)
 	if err != nil {
 		if errors.Is(err, ErrInvalidCreds) {
-			c.JSON(http.StatusUnauthorized, errorResp("invalid email or password"))
+			response.Unauthorized(c, "invalid email or password")
 			return
 		}
 		if errors.Is(err, ErrMerchantSuspended) {
-			c.JSON(http.StatusForbidden, errorResp("account suspended"))
+			response.Forbidden(c, "account suspended")
 			return
 		}
 		h.log.Error("login failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errorResp("login failed"))
+		response.Internal(c, "login failed")
 		return
 	}
 
@@ -121,14 +107,14 @@ func (h *Handler) Login(c *gin.Context) {
 func (h *Handler) Refresh(c *gin.Context) {
 	rawToken, err := c.Cookie(refreshTokenCookie)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, errorResp("missing refresh token"))
+		response.Unauthorized(c, "missing refresh token")
 		return
 	}
 
 	resp, newRawRefresh, err := h.svc.Refresh(c.Request.Context(), rawToken)
 	if err != nil {
 		h.clearRefreshCookie(c)
-		c.JSON(http.StatusUnauthorized, errorResp("session expired, please log in again"))
+		response.Unauthorized(c, "session expired, please log in again")
 		return
 	}
 
@@ -157,7 +143,7 @@ func (h *Handler) Logout(c *gin.Context) {
 func (h *Handler) GoogleLogin(c *gin.Context) {
 	state, err := generateState()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, errorResp("failed to initiate oauth"))
+		response.Internal(c, "failed to initiate oauth")
 		return
 	}
 
@@ -171,7 +157,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	// 1. Verify CSRF state
 	storedState, err := c.Cookie(csrfStateCookie)
 	if err != nil || storedState != c.Query("state") {
-		c.JSON(http.StatusBadRequest, errorResp("invalid oauth state"))
+		response.BadRequest(c, "invalid oauth state")
 		return
 	}
 	h.clearStateCookie(c)
@@ -180,7 +166,7 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	googleUser, err := h.google.Exchange(c.Request.Context(), c.Query("code"))
 	if err != nil {
 		h.log.Error("google exchange failed", zap.Error(err))
-		c.JSON(http.StatusBadRequest, errorResp("google authentication failed"))
+		response.BadRequest(c, "google authentication failed")
 		return
 	}
 
@@ -188,11 +174,11 @@ func (h *Handler) GoogleCallback(c *gin.Context) {
 	resp, rawRefresh, err := h.svc.HandleGoogleCallback(c.Request.Context(), googleUser)
 	if err != nil {
 		if errors.Is(err, ErrMerchantSuspended) {
-			c.JSON(http.StatusForbidden, errorResp("account suspended"))
+			response.Forbidden(c, "account suspended")
 			return
 		}
 		h.log.Error("google callback failed", zap.Error(err))
-		c.JSON(http.StatusInternalServerError, errorResp("authentication failed"))
+		response.Internal(c, "authentication failed")
 		return
 	}
 
@@ -223,14 +209,6 @@ func (h *Handler) clearStateCookie(c *gin.Context) {
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
-
-type ErrorResponse struct {
-	Error string `json:"error"`
-}
-
-func errorResp(msg string) ErrorResponse {
-	return ErrorResponse{Error: msg}
-}
 
 // generateState creates a random hex string for OAuth CSRF protection
 func generateState() (string, error) {

@@ -9,7 +9,6 @@ import (
 )
 
 // Service contains all wallet business logic.
-// It is intentionally decoupled from HTTP — easy to unit test.
 type Service struct {
 	repo *Repository
 	log  *zap.Logger

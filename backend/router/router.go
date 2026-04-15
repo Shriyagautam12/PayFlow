@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Shriyagautam12/PayFlow/internal/auth"
+	"github.com/Shriyagautam12/PayFlow/internal/payment"
 	"github.com/Shriyagautam12/PayFlow/internal/wallet"
 	"github.com/Shriyagautam12/PayFlow/pkg/middleware"
 )
@@ -27,12 +28,20 @@ const (
 	routeWalletGet    = "/wallet"
 	routeWalletLedger = "/wallet/ledger"
 	routeWalletPayout = "/wallet/payout"
+
+	// Payment
+	routePaymentInitiate = "/payment"
+	routePaymentList     = "/payment"
+	routePaymentGet      = "/payment/:id"
+	routePaymentCapture  = "/payment/:id/capture"
+	routePaymentRefund   = "/payment/:id/refund"
 )
 
 type Deps struct {
-	Auth   *auth.Handler
-	Wallet *wallet.Handler
-	Log    *zap.Logger
+	Auth    *auth.Handler
+	Wallet  *wallet.Handler
+	Payment *payment.Handler
+	Log     *zap.Logger
 }
 
 type RouterConfig struct {
@@ -75,6 +84,7 @@ func mountProtected(v1 *gin.RouterGroup, tokenSvc *auth.TokenService, deps Deps)
 
 	mountMerchant(g)
 	mountWallet(g, deps.Wallet)
+	mountPayment(g, deps.Payment)
 }
 
 func mountMerchant(g *gin.RouterGroup) {
@@ -85,6 +95,14 @@ func mountWallet(g *gin.RouterGroup, h *wallet.Handler) {
 	g.GET(routeWalletGet, h.GetWallet)
 	g.GET(routeWalletLedger, h.GetLedger)
 	g.POST(routeWalletPayout, h.Payout)
+}
+
+func mountPayment(g *gin.RouterGroup, h *payment.Handler) {
+	g.POST(routePaymentInitiate, h.Initiate)
+	g.GET(routePaymentList, h.List)
+	g.GET(routePaymentGet, h.Get)
+	g.POST(routePaymentCapture, h.Capture)
+	g.POST(routePaymentRefund, h.Refund)
 }
 
 func healthCheck(c *gin.Context) {

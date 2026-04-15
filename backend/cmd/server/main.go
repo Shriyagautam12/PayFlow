@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Shriyagautam12/PayFlow/internal/auth"
+	"github.com/Shriyagautam12/PayFlow/internal/payment"
 	"github.com/Shriyagautam12/PayFlow/internal/wallet"
 	"github.com/Shriyagautam12/PayFlow/pkg/config"
 	"github.com/Shriyagautam12/PayFlow/router"
@@ -55,6 +56,10 @@ func main() {
 	walletSvc := wallet.NewService(walletRepo, log)
 	walletHandler := wallet.NewHandler(walletSvc, log)
 
+	paymentRepo := payment.NewRepository(db)
+	paymentSvc := payment.NewService(paymentRepo, redisClient, walletSvc, log)
+	paymentHandler := payment.NewHandler(paymentSvc, log)
+
 	// ── Router ───────────────────────────────────────────────────────────────
 	r := router.New(
 		router.RouterConfig{
@@ -63,9 +68,10 @@ func main() {
 			TokenSvc:      tokenSvc,
 		},
 		router.Deps{
-			Auth:   authHandler,
-			Wallet: walletHandler,
-			Log:    log,
+			Auth:    authHandler,
+			Wallet:  walletHandler,
+			Payment: paymentHandler,
+			Log:     log,
 		},
 	)
 

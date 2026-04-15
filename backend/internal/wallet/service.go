@@ -62,6 +62,26 @@ func (s *Service) GetLedger(ctx context.Context, merchantID string, page, pageSi
 	}, nil
 }
 
+// Credit adds amount to the merchant wallet. Used by the payment service on capture.
+func (s *Service) Credit(ctx context.Context, merchantID string, amount int64, referenceID string) error {
+	w, err := s.repo.GetOrCreate(ctx, merchantID)
+	if err != nil {
+		return fmt.Errorf("credit wallet lookup: %w", err)
+	}
+	_, err = s.repo.Credit(ctx, w.ID, amount, "payment capture", referenceID)
+	return err
+}
+
+// Debit subtracts amount from the merchant wallet. Used by the payment service on refund.
+func (s *Service) Debit(ctx context.Context, merchantID string, amount int64, referenceID string) error {
+	w, err := s.repo.GetByMerchantID(ctx, merchantID)
+	if err != nil {
+		return fmt.Errorf("debit wallet lookup: %w", err)
+	}
+	_, _, err = s.repo.Debit(ctx, w.ID, amount, "payment refund", referenceID)
+	return err
+}
+
 // Payout debits the merchant wallet and records the movement in the ledger.
 // Returns ErrInsufficientFunds if the wallet balance is too low.
 func (s *Service) Payout(ctx context.Context, merchantID string, req PayoutRequest) (*PayoutResponse, error) {

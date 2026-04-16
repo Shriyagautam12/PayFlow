@@ -2,6 +2,8 @@ package payment
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
+
+	"github.com/Shriyagautam12/PayFlow/internal/events"
 )
 
 const (
@@ -30,16 +34,45 @@ type WalletService interface {
 	Debit(ctx context.Context, merchantID string, amount int64, referenceID string) error
 }
 
-// Service contains all payment business logic.
-type Service struct {
-	repo   *Repository
-	redis  *redis.Client
-	wallet WalletService
-	log    *zap.Logger
+// EventPublisher is the interface the payment service uses to publish events.
+// Using an interface keeps payment and events packages decoupled and testable.
+type EventPublisher interface {
+	Publish(ctx context.Context, event events.PaymentEvent) error
 }
 
-func NewService(repo *Repository, redis *redis.Client, wallet WalletService, log *zap.Logger) *Service {
-	return &Service{repo: repo, redis: redis, wallet: wallet, log: log}
+// Service contains all payment business logic.
+type Service struct {
+	repo      *Repository
+	redis     *redis.Client
+	wallet    WalletService
+	publisher EventPublisher // nil = no-op (Kafka not configured)
+	log       *zap.Logger
+}
+
+func NewService(repo *Repository, redis *redis.Client, wallet WalletService, publisher EventPublisher, log *zap.Logger) *Service {
+	return &Service{repo: repo, redis: redis, wallet: wallet, publisher: publisher, log: log}
+}
+
+// publish is a safe wrapper — skips if no publisher is wired.
+func (s *Service) publish(ctx context.Context, event events.PaymentEvent) {
+	if s.publisher == nil {
+		return
+	}
+	if err := s.publisher.Publish(ctx, event); err != nil {
+		// Non-fatal: log and continue. A real system would write to an outbox table.
+		s.log.Error("failed to publish event",
+			zap.String("event_type", string(event.EventType)),
+			zap.String("payment_id", event.PaymentID),
+			zap.Error(err),
+		)
+	}
+}
+
+// newEventID generates a random hex ID for each event (distinct from payment ID).
+func newEventID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 // ── Core Operations ───────────────────────────────────────────────────────────
@@ -144,6 +177,19 @@ func (s *Service) Capture(ctx context.Context, paymentID, merchantID string) (*P
 		zap.String("payment_id", p.ID),
 		zap.Int64("amount", p.Amount),
 	)
+
+	s.publish(ctx, events.PaymentEvent{
+		EventID:    newEventID(),
+		EventType:  events.EventPaymentCompleted,
+		OccurredAt: time.Now(),
+		PaymentID:  p.ID,
+		MerchantID: p.MerchantID,
+		Amount:     p.Amount,
+		Currency:   p.Currency,
+		Method:     string(p.Method),
+		Status:     string(p.Status),
+	})
+
 	return p, nil
 }
 
@@ -171,6 +217,19 @@ func (s *Service) Refund(ctx context.Context, paymentID, merchantID, reason stri
 
 	p.Status = StatusRefunded
 	s.log.Info("payment refunded", zap.String("payment_id", p.ID))
+
+	s.publish(ctx, events.PaymentEvent{
+		EventID:    newEventID(),
+		EventType:  events.EventPaymentRefunded,
+		OccurredAt: time.Now(),
+		PaymentID:  p.ID,
+		MerchantID: p.MerchantID,
+		Amount:     p.Amount,
+		Currency:   p.Currency,
+		Method:     string(p.Method),
+		Status:     string(p.Status),
+	})
+
 	return p, nil
 }
 

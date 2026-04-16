@@ -9,6 +9,7 @@ import (
 	"github.com/Shriyagautam12/PayFlow/internal/auth"
 	"github.com/Shriyagautam12/PayFlow/internal/payment"
 	"github.com/Shriyagautam12/PayFlow/internal/wallet"
+	"github.com/Shriyagautam12/PayFlow/internal/webhook"
 	"github.com/Shriyagautam12/PayFlow/pkg/middleware"
 )
 
@@ -35,12 +36,17 @@ const (
 	routePaymentGet      = "/payment/:id"
 	routePaymentCapture  = "/payment/:id/capture"
 	routePaymentRefund   = "/payment/:id/refund"
+
+	// Webhook
+	routeWebhookRegister = "/webhook"
+	routeWebhookList     = "/webhooks"
 )
 
 type Deps struct {
 	Auth    *auth.Handler
 	Wallet  *wallet.Handler
 	Payment *payment.Handler
+	Webhook *webhook.Handler
 	Log     *zap.Logger
 }
 
@@ -85,6 +91,7 @@ func mountProtected(v1 *gin.RouterGroup, tokenSvc *auth.TokenService, deps Deps)
 	mountMerchant(g)
 	mountWallet(g, deps.Wallet)
 	mountPayment(g, deps.Payment)
+	mountWebhook(g, deps.Webhook)
 }
 
 func mountMerchant(g *gin.RouterGroup) {
@@ -103,6 +110,11 @@ func mountPayment(g *gin.RouterGroup, h *payment.Handler) {
 	g.GET(routePaymentGet, h.Get)
 	g.POST(routePaymentCapture, h.Capture)
 	g.POST(routePaymentRefund, h.Refund)
+}
+
+func mountWebhook(g *gin.RouterGroup, h *webhook.Handler) {
+	g.POST(routeWebhookRegister, h.Register)
+	g.GET(routeWebhookList, h.List)
 }
 
 func healthCheck(c *gin.Context) {

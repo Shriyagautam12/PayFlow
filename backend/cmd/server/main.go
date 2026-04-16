@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -13,8 +14,10 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/Shriyagautam12/PayFlow/internal/auth"
+	"github.com/Shriyagautam12/PayFlow/internal/events"
 	"github.com/Shriyagautam12/PayFlow/internal/payment"
 	"github.com/Shriyagautam12/PayFlow/internal/wallet"
+	"github.com/Shriyagautam12/PayFlow/internal/webhook"
 	"github.com/Shriyagautam12/PayFlow/pkg/config"
 	"github.com/Shriyagautam12/PayFlow/router"
 )
@@ -44,7 +47,16 @@ func main() {
 	}
 
 	// Auto-migrate schema (in production, use proper migrations)
-	db.AutoMigrate(&auth.Merchant{}, &auth.RefreshToken{}, &wallet.Wallet{}, &wallet.LedgerEntry{})
+	db.AutoMigrate(
+		&auth.Merchant{}, &auth.RefreshToken{},
+		&wallet.Wallet{}, &wallet.LedgerEntry{},
+		&webhook.Webhook{}, &webhook.WebhookDelivery{},
+	)
+
+	// ── Kafka ─────────────────────────────────────────────────────────────────
+	kafkaBrokers := strings.Split(cfg.KafkaBrokers, ",")
+	eventProducer := events.NewProducer(kafkaBrokers)
+	defer eventProducer.Close()
 
 	// ── Services ─────────────────────────────────────────────────────────────
 	tokenSvc := auth.NewTokenService([]byte(cfg.JWTSecret))
@@ -56,9 +68,34 @@ func main() {
 	walletSvc := wallet.NewService(walletRepo, log)
 	walletHandler := wallet.NewHandler(walletSvc, log)
 
+	webhookRepo := webhook.NewRepository(db)
+	webhookSvc := webhook.NewService(webhookRepo, log)
+	webhookHandler := webhook.NewHandler(webhookSvc, log)
+
 	paymentRepo := payment.NewRepository(db)
-	paymentSvc := payment.NewService(paymentRepo, redisClient, walletSvc, log)
+	paymentSvc := payment.NewService(paymentRepo, redisClient, walletSvc, eventProducer, log)
 	paymentHandler := payment.NewHandler(paymentSvc, log)
+
+	// ── Kafka consumer (webhook delivery) ────────────────────────────────────
+	consumer := events.NewConsumer(kafkaBrokers, "webhook-service", webhookSvc.HandleEvent, log)
+	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	defer cancelConsumer()
+	go consumer.Start(consumerCtx)
+	defer consumer.Close()
+
+	// ── Retry ticker — re-attempt failed deliveries every minute ─────────────
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				webhookSvc.ProcessRetries(context.Background())
+			case <-consumerCtx.Done():
+				return
+			}
+		}
+	}()
 
 	// ── Router ───────────────────────────────────────────────────────────────
 	r := router.New(
@@ -71,6 +108,7 @@ func main() {
 			Auth:    authHandler,
 			Wallet:  walletHandler,
 			Payment: paymentHandler,
+			Webhook: webhookHandler,
 			Log:     log,
 		},
 	)

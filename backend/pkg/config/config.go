@@ -17,6 +17,7 @@ type Config struct {
 	GoogleRedirectURL  string // Google Redirect URL
 	AppEnv             string // development | production
 	AppURL             string // App URL
+	KafkaBrokers       string // comma-separated broker list e.g. "localhost:9092"
 }
 
 // Load reads config from environment variables.
@@ -34,6 +35,7 @@ func LoadConfig() (*Config, error) {
 		GoogleRedirectURL:  getEnv("GOOGLE_REDIRECT_URL", "http://localhost:8080/v1/auth/google/callback"),
 		AppEnv:             getEnv("APP_ENV", "development"),
 		AppURL:             getEnv("APP_URL", "http://localhost:3000"),
+		KafkaBrokers:       getEnv("KAFKA_BROKERS", "localhost:9092"),
 	}
 
 	return cfg, nil

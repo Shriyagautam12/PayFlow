@@ -1,6 +1,5 @@
 # PayFlow — System Flowcharts
 
-All diagrams use Mermaid syntax. Render in VS Code (Markdown Preview), GitHub, or https://mermaid.live
 
 ---
 

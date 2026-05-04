@@ -107,16 +107,16 @@ export const payments = {
       body: JSON.stringify({ reason }),
     }, token),
 
-  // Customer-facing: initiate a new payment (no auth — uses merchant public key)
   initiate: (
     body: { amount: number; currency: string; method: string; metadata?: Record<string, string> },
     idempotencyKey: string,
+    token?: string,
   ) =>
     request<Payment>("/payment", {
       method: "POST",
       body: JSON.stringify(body),
       headers: { "Idempotency-Key": idempotencyKey },
-    }),
+    }, token),
 };
 
 // ── Wallet ────────────────────────────────────────────────────────────────────
